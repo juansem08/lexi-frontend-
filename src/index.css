@@ -16,3 +16,63 @@
   font-style: normal;
   font-display: swap;
 }
+
+:root {
+  --font-family-open-dyslexic: 'OpenDyslexic', sans-serif;
+  --font-family-atkinson: 'Atkinson Hyperlegible', sans-serif;
+}
+
+/* Accessible utility font classes */
+.font-opendyslexic {
+  font-family: 'OpenDyslexic', sans-serif;
+}
+.font-atkinson {
+  font-family: 'Atkinson Hyperlegible', sans-serif;
+}
+.font-verdana {
+  font-family: Verdana, Geneva, Tahoma, sans-serif;
+}
+.font-arial {
+  font-family: Arial, Helvetica, sans-serif;
+}
+.font-comic {
+  font-family: 'Comic Sans MS', 'Comic Neue', cursive, sans-serif;
+}
+
+/* Contrast Modes */
+body.contrast-light {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+body.contrast-dark {
+  background-color: #0f172a;
+  color: #f1f5f9;
+}
+
+body.contrast-pastel {
+  background-color: #fdfbf7;
+  color: #27272a;
+}
+
+body.contrast-high {
+  background-color: #000000;
+  color: #ffff00;
+}
+
+/* Soft glow animation for calm celebration */
+@keyframes soft-glow {
+  0% {
+    box-shadow: 0 0 5px rgba(99, 102, 241, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 5px rgba(99, 102, 241, 0.2);
+  }
+}
+
+.animate-soft-glow {
+  animation: soft-glow 2.5s ease-in-out infinite;
+}
