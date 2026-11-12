@@ -1,4 +1,6 @@
-// Enums matching LexiLearn backend
+// Contratos que reflejan los DTOs de LexiLearn-Backend (src/modules/**/dto).
+
+// ─── Enums (Prisma) ──────────────────────────────────────────────
 export type FontFamily =
   | 'OPEN_DYSLEXIC'
   | 'ATKINSON_HYPERLEGIBLE'
@@ -8,10 +10,7 @@ export type FontFamily =
 
 export type ContrastMode = 'LIGHT' | 'DARK' | 'PASTEL' | 'HIGH_CONTRAST';
 
-export type TtsVoicePersona =
-  | 'CHILD_FRIENDLY'
-  | 'CALM_NARRATOR'
-  | 'NEURAL_FRIENDLY';
+export type TtsVoicePersona = 'CHILD_FRIENDLY' | 'CALM_NARRATOR' | 'NEURAL_FRIENDLY';
 
 export type HighlightPacing = 'SLOW' | 'BALANCED' | 'FAST';
 
@@ -25,14 +24,18 @@ export type RewardTaskType =
 
 export type ReadingLanguage = 'es' | 'en';
 
-export type DifficultyLevel =
-  | 'VERY_EASY'
-  | 'EASY'
-  | 'MODERATE'
-  | 'CHALLENGING'
-  | 'ADVANCED';
+export type DifficultyLevel = 'easy' | 'moderate' | 'challenging' | 'advanced';
 
-// Student & Accessibility Preferences
+// ─── Health ──────────────────────────────────────────────────────
+export interface HealthResponse {
+  status: string;
+  database: string;
+  uptimeSeconds: number;
+  version: string;
+  timestamp: string;
+}
+
+// ─── Students ────────────────────────────────────────────────────
 export interface AccessibilityPreferences {
   preferredFont: FontFamily;
   letterSpacing: number;
@@ -47,26 +50,23 @@ export interface AccessibilityPreferences {
   soundEffects: boolean;
 }
 
-export interface StudentProgress {
-  totalXp: number;
-  level: number;
-  currentFocusStreak: number;
-  bestFocusStreak: number;
-  totalFocusDays: number;
-  lastActiveDate: string | null;
-}
-
-export interface StudentProfile extends AccessibilityPreferences {
+export interface StudentProfile {
   id: string;
   studentCode: string;
   displayName: string;
   gradeLevel: number;
-  classroomCode?: string | null;
-  qrTokenVersion: number;
-  lastLoginAt?: string | null;
-  progress?: StudentProgress | null;
+  classroomCode: string | null;
+  accessibility: AccessibilityPreferences;
+  lastLoginAt: string | null;
+  createdAt: string;
 }
 
+export interface ProvisionedStudentResponse extends StudentProfile {
+  qrToken: string;
+  qrTokenExpiresAt: string;
+}
+
+// ─── Auth ────────────────────────────────────────────────────────
 export interface AuthResponse {
   accessToken: string;
   tokenType: string;
@@ -75,13 +75,23 @@ export interface AuthResponse {
   student: StudentProfile;
 }
 
-export interface ProvisionedStudentResponse {
-  student: StudentProfile;
+export interface QrTokenResponse {
   qrToken: string;
+  studentCode: string;
+  expiresAt: string;
+  expiresIn: number;
+}
+
+export interface VisualTokenResponse {
+  message: string;
+  visualTokenConfigured: boolean;
+}
+
+export interface PinChangedResponse {
   message: string;
 }
 
-// Reading Assistant
+// ─── Reading assistant ───────────────────────────────────────────
 export interface Syllable {
   text: string;
   startOffset: number;
@@ -117,77 +127,83 @@ export interface SentenceAnalysis {
   microChunks: MicroChunk[];
 }
 
-export interface ReadingStatistics {
-  characters: number;
-  words: number;
-  sentences: number;
-  paragraphs: number;
-  averageWordsPerSentence: number;
-}
-
-export interface ReadingTime {
-  estimatedSeconds: number;
-  estimatedMinutes: number;
-  wordsPerMinute: number;
-}
-
-export interface DifficultyAssessment {
-  score: number;
-  level: DifficultyLevel;
-  fleschReadingEase: number;
-  averageSentenceLength: number;
-  averageSyllablesPerWord: number;
-  polysyllabicWordPercentage: number;
-}
-
 export interface ProcessTextResponse {
   language: ReadingLanguage;
   text: string;
-  words: WordSyllables[];
-  sentences: SentenceAnalysis[];
-  readingTime: ReadingTime;
-  statistics: ReadingStatistics;
-  difficulty: DifficultyAssessment;
+  statistics: {
+    characters: number;
+    words: number;
+    sentences: number;
+    paragraphs: number;
+    averageWordsPerSentence: number;
+  };
+  readingTime: {
+    estimatedSeconds: number;
+    estimatedMinutes: number;
+    wordsPerMinute: number;
+  };
+  difficulty: {
+    score: number;
+    level: DifficultyLevel;
+    fleschReadingEase: number;
+    averageSentenceLength: number;
+    averageSyllablesPerWord: number;
+    polysyllabicWordPercentage: number;
+  };
   chunking: {
     maxWordsPerChunk: number;
     strategy: string;
   };
+  sentences: SentenceAnalysis[];
+  words: WordSyllables[];
 }
 
-// OCR
-export interface OcrParagraphBlock {
-  paragraphIndex: number;
+// ─── OCR ─────────────────────────────────────────────────────────
+export interface OcrWord {
+  index: number;
   text: string;
+  startOffset: number;
+  endOffset: number;
+}
+
+export interface OcrSentence {
+  chunkId: string;
+  index: number;
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  wordCount: number;
+  words: OcrWord[];
+}
+
+export interface OcrParagraph {
+  index: number;
+  text: string;
+  startOffset: number;
+  endOffset: number;
   sentenceCount: number;
-  wordCount: number;
-  startOffset: number;
-  endOffset: number;
-}
-
-export interface OcrChunkRef {
-  id: string;
-  order: number;
-  text: string;
-  wordCount: number;
-  startOffset: number;
-  endOffset: number;
+  sentences: OcrSentence[];
 }
 
 export interface OcrExtractResponse {
   documentId: string;
-  originalFilename: string;
   provider: string;
   confidence: number | null;
-  processingMs: number;
-  normalizedText: string;
-  wordCount: number;
-  sentenceCount: number;
-  paragraphCount: number;
-  paragraphs: OcrParagraphBlock[];
-  chunks: OcrChunkRef[];
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  text: string;
+  statistics: {
+    paragraphs: number;
+    sentences: number;
+    words: number;
+    characters: number;
+    processingMs: number;
+  };
+  blocks: OcrParagraph[];
 }
 
-// TTS
+// ─── TTS ─────────────────────────────────────────────────────────
 export interface SynthesizeSpeechResponse {
   assetId: string;
   textChunkId: string | null;
@@ -204,44 +220,23 @@ export interface SynthesizeSpeechResponse {
   durationMs: number | null;
 }
 
-// Gamification
-export interface StartSessionResponse {
-  sessionId: string;
-  studentId: string;
-  documentId?: string | null;
-  status: ReadingSessionStatus;
-  startedAt: string;
-  resumed: boolean;
-}
-
-export interface HeartbeatResponse {
-  sessionId: string;
-  durationSeconds: number;
-  totalXp: number;
-  currentFocusStreak: number;
-  totalFocusDays: number;
-  recorded: boolean;
-}
-
-export interface CelebrationResponse {
-  animation: string;
-  soundCue: string | null;
+// ─── Gamification ────────────────────────────────────────────────
+export interface FocusSummary {
+  currentStreak: number;
+  bestStreak: number;
+  focusDays: number;
   message: string;
 }
 
-export interface ClaimRewardResponse {
-  claimed: boolean;
-  alreadyClaimed: boolean;
-  taskId: string;
-  taskType: RewardTaskType;
-  xpAwarded: number;
+export interface ProgressSummary {
   totalXp: number;
-  newLevel?: number | null;
-  celebration?: CelebrationResponse | null;
+  level: number;
+  xpIntoLevel: number;
+  xpForNextLevel: number;
+  levelProgressPercent: number;
 }
 
-export interface StudentBadge {
-  id: string;
+export interface EarnedBadge {
   code: string;
   name: string;
   description: string;
@@ -249,31 +244,69 @@ export interface StudentBadge {
   earnedAt: string;
 }
 
+export interface StartSessionResponse {
+  sessionId: string;
+  documentId: string | null;
+  status: ReadingSessionStatus;
+  startedAt: string;
+  resumed: boolean;
+  gentleMessage: string;
+}
+
+export interface HeartbeatResponse {
+  sessionId: string;
+  status: ReadingSessionStatus;
+  durationSeconds: number;
+  chunksProcessed: number;
+  interactions: number;
+  lastHeartbeatAt: string;
+  accepted: { activeSeconds: number; chunksProcessed: number; interactions: number };
+  focus: FocusSummary;
+  gentleMessage: string;
+}
+
+export interface ClaimRewardResponse {
+  claimId: string;
+  taskType: RewardTaskType;
+  taskId: string;
+  xpAwarded: number;
+  alreadyClaimed: boolean;
+  leveledUp: boolean;
+  sessionCompleted: boolean;
+  progress: ProgressSummary;
+  focus: FocusSummary;
+  badges: EarnedBadge[];
+  celebration: { message: string; animation: string; soundCue: string | null };
+}
+
 export interface StudentStatsResponse {
   studentId: string;
   displayName: string;
-  studentCode: string;
-  totalXp: number;
-  level: number;
-  currentFocusStreak: number;
-  bestFocusStreak: number;
-  totalFocusDays: number;
-  lastActiveDate: string | null;
-  badges: StudentBadge[];
-  recentSessions: Array<{
-    id: string;
-    startedAt: string;
-    endedAt: string | null;
-    durationSeconds: number;
-    chunksProcessed: number;
-    interactions: number;
-  }>;
+  totalReadingSeconds: number;
+  totalReadingMinutes: number;
+  textsProcessed: number;
+  sessionsStarted: number;
+  sessionsCompleted: number;
+  chunksProcessed: number;
+  interactions: number;
+  progress: ProgressSummary;
+  focus: FocusSummary;
+  rewards: {
+    sentences: number;
+    pages: number;
+    focusMilestones: number;
+    sessions: number;
+    totalClaims: number;
+  };
+  badges: EarnedBadge[];
+  generatedAt: string;
 }
 
+// ─── Errors ──────────────────────────────────────────────────────
 export interface ApiError {
   statusCode: number;
   timestamp: string;
   path: string;
   error: string;
-  message: string | string[];
+  message: string[] | string;
 }

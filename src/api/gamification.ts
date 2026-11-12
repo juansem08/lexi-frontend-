@@ -1,53 +1,45 @@
 import { request } from './client';
 import type {
-  StartSessionResponse,
-  HeartbeatResponse,
   ClaimRewardResponse,
-  StudentStatsResponse,
+  HeartbeatResponse,
   RewardTaskType,
+  StartSessionResponse,
+  StudentStatsResponse,
 } from '../types/api';
 
+const post = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) });
+
 export function startReadingSession(documentId?: string): Promise<StartSessionResponse> {
-  return request<StartSessionResponse>('/gamification/sessions/start', {
-    method: 'POST',
-    body: JSON.stringify({ documentId: documentId || null }),
-  });
+  return request<StartSessionResponse>(
+    '/gamification/sessions/start',
+    post(documentId ? { documentId } : {}),
+  );
 }
 
-export function sendHeartbeat(
-  sessionId: string,
-  durationSeconds: number,
-  interactions = 1,
-  chunksProcessed = 1
-): Promise<HeartbeatResponse> {
-  return request<HeartbeatResponse>('/gamification/sessions/heartbeat', {
-    method: 'POST',
-    body: JSON.stringify({
-      sessionId,
-      durationSeconds,
-      interactions,
-      chunksProcessed,
-    }),
-  });
+export interface HeartbeatPayload {
+  sessionId: string;
+  /** 0–300 segundos de lectura activa desde el heartbeat anterior. */
+  activeSeconds: number;
+  chunksProcessed?: number;
+  interactions?: number;
 }
 
+export function sendHeartbeat(payload: HeartbeatPayload): Promise<HeartbeatResponse> {
+  return request<HeartbeatResponse>('/gamification/sessions/heartbeat', post(payload));
+}
+
+/** taskId es idempotente: repetirlo nunca otorga XP dos veces. */
 export function claimReward(
-  taskId: string,
   taskType: RewardTaskType,
-  sessionId?: string
+  taskId: string,
+  sessionId?: string,
 ): Promise<ClaimRewardResponse> {
-  return request<ClaimRewardResponse>('/gamification/rewards/claim', {
-    method: 'POST',
-    body: JSON.stringify({
-      taskId,
-      taskType,
-      sessionId: sessionId || null,
-    }),
-  });
+  return request<ClaimRewardResponse>(
+    '/gamification/rewards/claim',
+    post(sessionId ? { taskType, taskId, sessionId } : { taskType, taskId }),
+  );
 }
 
 export function getStudentStats(studentId: string): Promise<StudentStatsResponse> {
-  return request<StudentStatsResponse>(`/gamification/students/${studentId}/stats`, {
-    method: 'GET',
-  });
+  return request<StudentStatsResponse>(`/gamification/students/${studentId}/stats`);
 }

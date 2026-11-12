@@ -1,301 +1,166 @@
-import React, { useEffect, useState } from 'react';
-import {
-  Trophy,
-  Flame,
-  Award,
-  Sparkles,
-  Calendar,
-  Clock,
-  BookOpen,
-  Star,
-  CheckCircle2,
-  Lock,
-} from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Leaf } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getStudentStats } from '../api/gamification';
-import type { StudentStatsResponse } from '../types/api';
-
-const ALL_POSSIBLE_BADGES = [
-  {
-    code: 'first-step',
-    name: 'Primer Paso Amable',
-    description: 'Completaste tu primera lectura asistida.',
-    icon: '🌱',
-  },
-  {
-    code: 'sentence-explorer',
-    name: 'Explorador de Oraciones',
-    description: 'Leíste y exploraste más de 10 oraciones.',
-    icon: '🧭',
-  },
-  {
-    code: 'focus-spark',
-    name: 'Chispa de Enfoque',
-    description: 'Mantuviste una sesión de concentración con calma.',
-    icon: '✨',
-  },
-  {
-    code: 'page-wanderer',
-    name: 'Viajero de Páginas',
-    description: 'Completaste páginas enteras a tu propio ritmo.',
-    icon: '📖',
-  },
-  {
-    code: 'steady-reader',
-    name: 'Lector Constante',
-    description: 'Construiste una racha de lectura sin presiones.',
-    icon: '🌟',
-  },
-  {
-    code: 'calm-finisher',
-    name: 'Finalizador Sereno',
-    description: 'Terminaste tus lecturas disfrutando cada palabra.',
-    icon: '🏆',
-  },
-];
+import { BADGE_CATALOG } from '../lib/badges';
+import type { ProgressSummary } from '../types/api';
+import { Button, PageHeader, Section, cx } from './ui';
 
 interface Props {
   onOpenLogin: () => void;
 }
 
+const LevelRing: React.FC<{ progress: ProgressSummary }> = ({ progress }) => {
+  const r = 52;
+  const c = 2 * Math.PI * r;
+  const pct = Math.min(100, Math.max(0, progress.levelProgressPercent));
+  return (
+    <div className="flex items-center gap-6">
+      <svg viewBox="0 0 120 120" className="h-36 w-36 shrink-0" role="img" aria-label={`Nivel ${progress.level}, ${Math.round(pct)} % hacia el siguiente`}>
+        <circle cx="60" cy="60" r={r} fill="none" stroke="var(--surface-2)" strokeWidth="10" />
+        <circle
+          cx="60"
+          cy="60"
+          r={r}
+          fill="none"
+          stroke="var(--moss)"
+          strokeWidth="10"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - pct / 100)}
+          transform="rotate(-90 60 60)"
+        />
+        <text x="60" y="58" textAnchor="middle" fontFamily="Lexend" fontSize="34" fontWeight="600" fill="var(--ink)">
+          {progress.level}
+        </text>
+        <text x="60" y="80" textAnchor="middle" fontSize="12" fill="var(--ink-soft)">
+          nivel
+        </text>
+      </svg>
+      <div>
+        <p className="font-[Lexend] text-3xl font-semibold">{progress.totalXp} XP</p>
+        <p className="mt-1 text-ink-soft">
+          {progress.xpForNextLevel - progress.xpIntoLevel} XP para llegar al nivel {progress.level + 1}
+        </p>
+      </div>
+    </div>
+  );
+};
+
 export const GamificationBoard: React.FC<Props> = ({ onOpenLogin }) => {
-  const { student, isAuthenticated } = useAuth();
-  const [stats, setStats] = useState<StudentStatsResponse | null>(null);
+  const { student, stats, isAuthenticated, refreshStats } = useAuth();
 
   useEffect(() => {
-    async function loadStats() {
-      if (isAuthenticated && student) {
-        try {
-          const data = await getStudentStats(student.id);
-          setStats(data);
-        } catch (err) {
-          console.error('Failed to load student stats', err);
-        }
-      }
-    }
-    loadStats();
-  }, [isAuthenticated, student]);
+    if (isAuthenticated) void refreshStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   if (!isAuthenticated || !student) {
     return (
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
-          <Trophy className="h-8 w-8" />
-        </div>
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">
-          Tu Aventura de Progreso y Medallas
-        </h2>
-        <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400">
-          Inicia sesión con tu PIN, código QR o secuencia de iconos para acumular puntos XP, guardar tus rachas amigables y desbloquear medallas de concentración.
-        </p>
-        <button
-          type="button"
-          onClick={onOpenLogin}
-          className="mt-6 inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 font-bold text-white shadow-md hover:bg-indigo-700"
-        >
-          <Sparkles className="h-5 w-5" />
-          <span>Iniciar Sesión de Estudiante</span>
-        </button>
+      <div>
+        <PageHeader
+          title="Mi progreso"
+          lead="Aquí verás tu nivel, tus días de lectura y las insignias que vas encontrando. Nada se pierde si descansas."
+        />
+        <Button size="lg" onClick={onOpenLogin}>
+          Entrar para ver mi progreso
+        </Button>
       </div>
     );
   }
 
-  const currentXp = stats?.totalXp ?? student.progress?.totalXp ?? 0;
-  const currentLevel = stats?.level ?? student.progress?.level ?? 1;
-  const levelProgressPercent = Math.min(100, Math.round((currentXp % 100)));
+  if (!stats) {
+    return (
+      <div>
+        <PageHeader title="Mi progreso" />
+        <div className="h-64 rounded-[20px] bg-surface-2" aria-label="Cargando progreso" />
+      </div>
+    );
+  }
 
-  const earnedBadgeCodes = new Set(stats?.badges.map((b) => b.code) || []);
+  const earned = new Map(stats.badges.map((b) => [b.code, b]));
+  const leaves = Math.min(stats.focus.focusDays, 30);
 
   return (
-    <div className="space-y-6">
-      {/* Top Welcome & Level Hero */}
-      <div className="relative overflow-hidden rounded-3xl bg-linear-to-r from-indigo-600 to-purple-600 p-8 text-white shadow-xl">
-        <div className="relative z-10 flex flex-col justify-between gap-6 md:flex-row md:items-center">
-          <div>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-md">
-              <Star className="h-3.5 w-3.5 text-amber-300" />
-              Estudiante: {student.displayName} ({student.studentCode})
-            </span>
-            <h1 className="mt-2 text-3xl font-black">Nivel {currentLevel}</h1>
-            <p className="mt-1 text-sm text-indigo-100">
-              Cada oración y página leída te acompaña en este viaje amable.
-            </p>
-          </div>
+    <div className="space-y-8">
+      <PageHeader
+        title={`Hola, ${student.displayName}`}
+        lead="Cada día de lectura cuenta. Los días de descanso nunca te quitan nada."
+      />
 
-          <div className="flex items-center gap-6">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1 text-3xl font-black text-amber-300">
-                <Sparkles className="h-7 w-7" />
-                <span>{currentXp}</span>
-              </div>
-              <span className="text-xs uppercase tracking-wider text-indigo-200">
-                Puntos XP
-              </span>
-            </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Section>
+          <LevelRing progress={stats.progress} />
+        </Section>
 
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1 text-3xl font-black text-orange-300">
-                <Flame className="h-7 w-7" />
-                <span>{stats?.currentFocusStreak ?? 0}</span>
-              </div>
-              <span className="text-xs uppercase tracking-wider text-indigo-200">
-                Días de Enfoque
-              </span>
-            </div>
+        <Section>
+          <p className="font-[Lexend] text-3xl font-semibold">
+            {stats.focus.focusDays} {stats.focus.focusDays === 1 ? 'día' : 'días'} de lectura
+          </p>
+          <div className="mt-3 flex flex-wrap gap-1" aria-hidden>
+            {Array.from({ length: leaves }).map((_, i) => (
+              <Leaf key={i} className="h-6 w-6 text-moss" />
+            ))}
+            {stats.focus.focusDays > leaves && (
+              <span className="self-center pl-1 text-ink-soft">y {stats.focus.focusDays - leaves} más</span>
+            )}
+            {leaves === 0 && <span className="text-ink-soft">Tu primera hoja aparece el día que leas.</span>}
           </div>
-        </div>
-
-        {/* Level XP Bar */}
-        <div className="mt-6">
-          <div className="mb-1.5 flex justify-between text-xs font-bold text-indigo-200">
-            <span>Progreso al Nivel {currentLevel + 1}</span>
-            <span>{currentXp % 100} / 100 XP</span>
-          </div>
-          <div className="h-3.5 w-full overflow-hidden rounded-full bg-white/20 backdrop-blur-md">
-            <div
-              className="h-full rounded-full bg-amber-400 transition-all duration-500"
-              style={{ width: `${levelProgressPercent}%` }}
-            />
-          </div>
-        </div>
+          <p className="mt-3 text-ink-soft">
+            {stats.focus.currentStreak > 0
+              ? `Llevas ${stats.focus.currentStreak} ${stats.focus.currentStreak === 1 ? 'día seguido' : 'días seguidos'}. `
+              : ''}
+            Tu mejor racha fue de {stats.focus.bestStreak} {stats.focus.bestStreak === 1 ? 'día' : 'días'}.
+          </p>
+        </Section>
       </div>
 
-      {/* Stats Summary Cards */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-950 dark:text-orange-400">
-              <Flame className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-black text-slate-800 dark:text-slate-100">
-                {stats?.currentFocusStreak ?? 0}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Racha actual</p>
-            </div>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 lg:grid-cols-5">
+        {[
+          ['Minutos leídos', stats.totalReadingMinutes],
+          ['Oraciones leídas', stats.rewards.sentences],
+          ['Páginas terminadas', stats.rewards.pages],
+          ['Sesiones completas', stats.sessionsCompleted],
+          ['Fotos escaneadas', stats.textsProcessed],
+        ].map(([label, value]) => (
+          <div key={label as string} className="border-l-4 border-line pl-4">
+            <dt className="text-ink-soft">{label}</dt>
+            <dd className="font-[Lexend] text-3xl font-semibold">{value}</dd>
           </div>
-        </div>
+        ))}
+      </dl>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-950 dark:text-amber-400">
-              <Trophy className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-black text-slate-800 dark:text-slate-100">
-                {stats?.bestFocusStreak ?? 0}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Mejor racha</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400">
-              <Calendar className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-black text-slate-800 dark:text-slate-100">
-                {stats?.totalFocusDays ?? 0}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Días totales</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100 text-purple-600 dark:bg-purple-950 dark:text-purple-400">
-              <Award className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-black text-slate-800 dark:text-slate-100">
-                {stats?.badges.length ?? 0}
-              </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Medallas</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Badges Showcase */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Award className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
-            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">
-              Vitrina de Medallas Amables
-            </h2>
-          </div>
-          <span className="text-xs font-semibold text-slate-400">
-            {stats?.badges.length || 0} de {ALL_POSSIBLE_BADGES.length} desbloqueadas
-          </span>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {ALL_POSSIBLE_BADGES.map((b) => {
-            const isEarned = earnedBadgeCodes.has(b.code);
+      <Section
+        title="Insignias"
+        description={`Tienes ${stats.badges.length} de ${BADGE_CATALOG.length}. Las insignias no caducan.`}
+      >
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {BADGE_CATALOG.map((b) => {
+            const got = earned.get(b.code);
             return (
-              <div
+              <li
                 key={b.code}
-                className={`flex items-start gap-4 rounded-2xl border p-4 transition-all ${
-                  isEarned
-                    ? 'border-indigo-200 bg-indigo-50/40 dark:border-indigo-800 dark:bg-indigo-950/30'
-                    : 'border-slate-200 bg-slate-50/60 opacity-60 dark:border-slate-800 dark:bg-slate-800/40'
-                }`}
+                className={cx(
+                  'flex gap-4 rounded-2xl p-4',
+                  got ? 'bg-moss-soft' : 'border-2 border-dashed border-line',
+                )}
               >
-                <div className="text-3xl shrink-0">{b.icon}</div>
+                <span className={cx('text-4xl leading-none', !got && 'opacity-30 grayscale')} aria-hidden>
+                  {b.icon}
+                </span>
                 <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">
-                      {b.name}
-                    </h3>
-                    {isEarned ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    ) : (
-                      <Lock className="h-3.5 w-3.5 text-slate-400" />
-                    )}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    {b.description}
-                  </p>
+                  <p className="font-semibold">{b.name}</p>
+                  <p className="mt-0.5 text-sm text-ink-soft">{got ? b.description : b.howTo}</p>
+                  {got && (
+                    <p className="mt-1 text-sm text-moss">
+                      Conseguida el {new Date(got.earnedAt).toLocaleDateString('es')}
+                    </p>
+                  )}
                 </div>
-              </div>
+              </li>
             );
           })}
-        </div>
-      </div>
-
-      {/* Recent Sessions */}
-      {stats && stats.recentSessions && stats.recentSessions.length > 0 && (
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="mb-4 flex items-center gap-2">
-            <Clock className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-            <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
-              Sesiones de Lectura Recientes
-            </h3>
-          </div>
-
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {stats.recentSessions.slice(0, 5).map((session) => (
-              <div key={session.id} className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-3">
-                  <BookOpen className="h-4 w-4 text-slate-400" />
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                    {new Date(session.startedAt).toLocaleDateString()} -{' '}
-                    {Math.round(session.durationSeconds / 60)} minutos
-                  </span>
-                </div>
-                <div className="flex gap-4 text-xs text-slate-500">
-                  <span>{session.chunksProcessed} fragmentos</span>
-                  <span>{session.interactions} interacciones</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+        </ul>
+      </Section>
     </div>
   );
 };

@@ -1,247 +1,259 @@
 import React, { useState } from 'react';
-import {
-  BookOpen,
-  Camera,
-  Trophy,
-  Sliders,
-  GraduationCap,
-  Sparkles,
-  User,
-  LogOut,
-  Flame,
-  Server,
-} from 'lucide-react';
+import { BookOpenText, GraduationCap, LogOut, ScanText, Sprout, SlidersHorizontal } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { useAccessibility } from '../context/AccessibilityContext';
+import { useApiHealth } from '../hooks/useApiHealth';
 import { ApiSettingsModal } from './ApiSettingsModal';
-import { LoginModal } from './LoginModal';
+import { Button, cx } from './ui';
 
 export type ActiveTab = 'reader' | 'ocr' | 'gamification' | 'preferences' | 'educator';
+
+const NAV: Array<{ id: ActiveTab; label: string; short: string; Icon: typeof BookOpenText }> = [
+  { id: 'reader', label: 'Leer', short: 'Leer', Icon: BookOpenText },
+  { id: 'ocr', label: 'Escanear una página', short: 'Escanear', Icon: ScanText },
+  { id: 'gamification', label: 'Mi progreso', short: 'Progreso', Icon: Sprout },
+  { id: 'preferences', label: 'Ajustes de lectura', short: 'Ajustes', Icon: SlidersHorizontal },
+];
 
 interface Props {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
+  onOpenLogin: () => void;
   children: React.ReactNode;
 }
 
-export const Layout: React.FC<Props> = ({ activeTab, setActiveTab, children }) => {
-  const { student, isAuthenticated, logout } = useAuth();
-  const { fontClass } = useAccessibility();
+/** Marca: dos páginas abiertas con una línea de lectura resaltada. */
+const BrandMark: React.FC = () => (
+  <svg viewBox="0 0 40 40" className="h-10 w-10" aria-hidden>
+    <rect width="40" height="40" rx="12" fill="var(--accent)" />
+    <path d="M8 12c4-1.5 8-1.5 12 1v16c-4-2.5-8-2.5-12-1z" fill="var(--accent-ink)" opacity=".95" />
+    <path d="M32 12c-4-1.5-8-1.5-12 1v16c4-2.5 8-2.5 12-1z" fill="var(--accent-ink)" opacity=".75" />
+    <rect x="10" y="19" width="20" height="4" rx="2" fill="var(--ruler)" />
+  </svg>
+);
 
-  const [isApiSettingsOpen, setIsApiSettingsOpen] = useState(false);
-  const [isLoginOpen, setIsLoginOpen] = useState(false);
+const ConnectionStatus: React.FC<{ onClick: () => void; compact?: boolean }> = ({
+  onClick,
+  compact,
+}) => {
+  const { state } = useApiHealth();
+  const label =
+    state === null
+      ? 'Comprobando la API…'
+      : state.kind === 'ok'
+        ? 'API conectada'
+        : state.kind === 'degraded'
+          ? 'Base de datos sin respuesta'
+          : 'API sin conexión';
+  const color =
+    state === null ? 'bg-ink-soft' : state.kind === 'ok' ? 'bg-moss' : 'bg-danger';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        'flex items-center gap-2.5 rounded-xl text-left text-sm text-ink-soft hover:bg-surface-2 hover:text-ink',
+        compact ? 'p-3.5' : 'w-full px-3 py-2.5',
+      )}
+      title={`${label}. Configurar la conexión.`}
+    >
+      <span className={cx('h-2.5 w-2.5 shrink-0 rounded-full', color)} aria-hidden />
+      <span className={compact ? 'sr-only' : 'truncate'}>{label}</span>
+    </button>
+  );
+};
+
+const StudentCard: React.FC<{ onOpenLogin: () => void }> = ({ onOpenLogin }) => {
+  const { student, stats, logout, isLoading } = useAuth();
+
+  if (isLoading) return <div className="h-28 rounded-2xl bg-surface-2" aria-hidden />;
+
+  if (!student) {
+    return (
+      <div className="rounded-2xl border border-line bg-surface p-4">
+        <p className="text-ink">Entra para guardar tu progreso y tus ajustes.</p>
+        <Button className="mt-3 w-full" onClick={onOpenLogin}>
+          Entrar
+        </Button>
+      </div>
+    );
+  }
+
+  const p = stats?.progress;
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-4">
+      <div className="flex items-center gap-3">
+        <span
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft font-[Lexend] text-lg font-semibold text-accent"
+          aria-hidden
+        >
+          {student.displayName.charAt(0)}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate font-semibold text-ink">{student.displayName}</p>
+          <p className="text-sm text-ink-soft">{student.studentCode}</p>
+        </div>
+      </div>
+      {p && (
+        <div className="mt-3">
+          <div className="flex justify-between text-sm">
+            <span className="font-semibold text-ink">Nivel {p.level}</span>
+            <span className="text-ink-soft">{p.totalXp} XP</span>
+          </div>
+          <div
+            className="mt-1.5 h-2 overflow-hidden rounded-full bg-surface-2"
+            role="progressbar"
+            aria-label="Avance hacia el siguiente nivel"
+            aria-valuenow={Math.round(p.levelProgressPercent)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="h-full rounded-full bg-moss" style={{ width: `${p.levelProgressPercent}%` }} />
+          </div>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={logout}
+        className="mt-3 inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink"
+      >
+        <LogOut className="h-4 w-4" aria-hidden />
+        Salir
+      </button>
+    </div>
+  );
+};
+
+export const Layout: React.FC<Props> = ({ activeTab, setActiveTab, onOpenLogin, children }) => {
+  const { student, sessionExpired, logout } = useAuth();
+  const [apiOpen, setApiOpen] = useState(false);
+
+  const navButton = (id: ActiveTab, label: string, Icon: typeof BookOpenText) => {
+    const active = activeTab === id;
+    return (
+      <button
+        key={id}
+        type="button"
+        onClick={() => setActiveTab(id)}
+        aria-current={active ? 'page' : undefined}
+        className={cx(
+          'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[1.05rem]',
+          active ? 'bg-accent-soft font-semibold text-ink' : 'text-ink-soft hover:bg-surface-2 hover:text-ink',
+        )}
+      >
+        <Icon className={cx('h-5 w-5', active && 'text-accent')} aria-hidden />
+        {label}
+      </button>
+    );
+  };
 
   return (
-    <div className={`min-h-screen transition-colors duration-200 ${fontClass}`}>
-      {/* Top Accessible Navbar */}
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/90">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
-          {/* Logo / Brand */}
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md">
-              <BookOpen className="h-6 w-6" />
-            </div>
-            <div>
-              <span className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
-                Lexi<span className="text-indigo-600 dark:text-indigo-400">Learn</span>
-              </span>
-              <span className="hidden text-xs text-slate-400 sm:block">
-                Lectura asistiva & sensorial
-              </span>
-            </div>
-          </div>
+    <div className="min-h-screen lg:grid lg:grid-cols-[17rem_1fr]">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2"
+      >
+        Ir al contenido
+      </a>
 
-          {/* Center Navigation Tabs */}
-          <nav className="hidden items-center gap-1 rounded-2xl bg-slate-100 p-1 md:flex dark:bg-slate-800">
-            <button
-              type="button"
-              onClick={() => setActiveTab('reader')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === 'reader'
-                  ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <BookOpen className="h-4 w-4" />
-              <span>Lector Asistivo</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('ocr')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === 'ocr'
-                  ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <Camera className="h-4 w-4" />
-              <span>Escanear OCR</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('gamification')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === 'gamification'
-                  ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <Trophy className="h-4 w-4" />
-              <span>Mi Progreso</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('preferences')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === 'preferences'
-                  ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <Sliders className="h-4 w-4" />
-              <span>Accesibilidad</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('educator')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
-                activeTab === 'educator'
-                  ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400'
-              }`}
-            >
-              <GraduationCap className="h-4 w-4" />
-              <span>Educador</span>
-            </button>
-          </nav>
-
-          {/* Right User & API Control */}
-          <div className="flex items-center gap-3">
-            {/* Server Settings Icon */}
-            <button
-              type="button"
-              title="Configurar URL de la API"
-              onClick={() => setIsApiSettingsOpen(true)}
-              className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-800 dark:bg-slate-800 dark:text-slate-400"
-            >
-              <Server className="h-5 w-5" />
-            </button>
-
-            {isAuthenticated && student ? (
-              <div className="flex items-center gap-3">
-                {/* Gamification mini-chip */}
-                <div className="hidden items-center gap-2 rounded-2xl bg-indigo-50 px-3 py-1.5 dark:bg-indigo-950/60 sm:flex">
-                  <div className="flex items-center gap-1 text-xs font-black text-indigo-700 dark:text-indigo-300">
-                    <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                    <span>{student.progress?.totalXp ?? 0} XP</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-xs font-black text-orange-600 dark:text-orange-400">
-                    <Flame className="h-3.5 w-3.5" />
-                    <span>{student.progress?.currentFocusStreak ?? 0}d</span>
-                  </div>
-                </div>
-
-                {/* Student Profile Pill */}
-                <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-1.5 dark:border-slate-700 dark:bg-slate-800">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-indigo-600 font-bold text-white text-xs">
-                    {student.displayName.charAt(0)}
-                  </div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                    {student.displayName}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={logout}
-                    title="Cerrar sesión"
-                    className="ml-1 text-slate-400 hover:text-rose-600"
-                  >
-                    <LogOut className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setIsLoginOpen(true)}
-                className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-md hover:bg-indigo-700"
-              >
-                <User className="h-4 w-4" />
-                <span>Entrar (PIN / QR / Iconos)</span>
-              </button>
-            )}
+      {/* Barra lateral (escritorio) */}
+      <aside className="no-print sticky top-0 hidden h-screen flex-col gap-6 border-r border-line bg-bg px-4 py-6 lg:flex">
+        <div className="flex items-center gap-3 px-2">
+          <BrandMark />
+          <div>
+            <p className="font-[Lexend] text-xl font-semibold text-ink">LexiLearn</p>
+            <p className="text-sm text-ink-soft">Lectura a tu ritmo</p>
           </div>
         </div>
 
-        {/* Mobile Navigation Tabs */}
-        <div className="flex overflow-x-auto border-t border-slate-100 p-2 md:hidden dark:border-slate-800">
-          <div className="flex w-full justify-around gap-1 text-[11px] font-bold">
-            <button
-              onClick={() => setActiveTab('reader')}
-              className={`rounded-xl px-2 py-1.5 ${
-                activeTab === 'reader'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              Lector
-            </button>
-            <button
-              onClick={() => setActiveTab('ocr')}
-              className={`rounded-xl px-2 py-1.5 ${
-                activeTab === 'ocr'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              OCR
-            </button>
-            <button
-              onClick={() => setActiveTab('gamification')}
-              className={`rounded-xl px-2 py-1.5 ${
-                activeTab === 'gamification'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              Progreso
-            </button>
-            <button
-              onClick={() => setActiveTab('preferences')}
-              className={`rounded-xl px-2 py-1.5 ${
-                activeTab === 'preferences'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              Ajustes
-            </button>
-            <button
-              onClick={() => setActiveTab('educator')}
-              className={`rounded-xl px-2 py-1.5 ${
-                activeTab === 'educator'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-slate-600 dark:text-slate-400'
-              }`}
-            >
-              Educador
-            </button>
+        <nav aria-label="Principal" className="space-y-1">
+          {NAV.map((n) => navButton(n.id, n.label, n.Icon))}
+        </nav>
+
+        <div className="mt-auto space-y-3">
+          <StudentCard onOpenLogin={onOpenLogin} />
+          <div className="space-y-1 border-t border-line pt-3">
+            {navButton('educator', 'Para docentes', GraduationCap)}
+            <ConnectionStatus onClick={() => setApiOpen(true)} />
           </div>
+        </div>
+      </aside>
+
+      {/* Barra superior (móvil y tableta) */}
+      <header className="no-print sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur lg:hidden">
+        <div className="flex items-center gap-2.5">
+          <BrandMark />
+          <p className="font-[Lexend] text-lg font-semibold text-ink">LexiLearn</p>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('educator')}
+            aria-label="Para docentes"
+            className={cx(
+              'rounded-xl p-2.5',
+              activeTab === 'educator' ? 'bg-accent-soft text-accent' : 'text-ink-soft hover:bg-surface-2',
+            )}
+          >
+            <GraduationCap className="h-5 w-5" />
+          </button>
+          <ConnectionStatus compact onClick={() => setApiOpen(true)} />
+          {student ? (
+            <button
+              type="button"
+              onClick={logout}
+              aria-label={`Salir de la cuenta de ${student.displayName}`}
+              title={`Salir (${student.displayName})`}
+              className="inline-flex items-center gap-1.5 rounded-xl p-2.5 text-sm text-ink-soft hover:bg-surface-2 hover:text-ink"
+            >
+              <LogOut className="h-5 w-5" aria-hidden />
+              <span className="hidden sm:inline">Salir</span>
+            </button>
+          ) : (
+            <Button size="sm" onClick={onOpenLogin}>
+              Entrar
+            </Button>
+          )}
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">{children}</main>
+      <main id="main" className="min-w-0 px-4 pb-28 pt-6 sm:px-8 lg:px-12 lg:pb-12 lg:pt-10">
+        {sessionExpired && !student && (
+          <div className="no-print mx-auto mb-6 flex max-w-5xl flex-wrap items-center justify-between gap-3 rounded-xl bg-accent-soft px-4 py-3">
+            <span>Tu sesión terminó. Tu progreso está guardado; entra de nuevo para seguir.</span>
+            <Button size="sm" onClick={onOpenLogin}>
+              Entrar de nuevo
+            </Button>
+          </div>
+        )}
+        <div className="mx-auto max-w-5xl">{children}</div>
+      </main>
 
-      {/* Modals */}
-      <ApiSettingsModal
-        isOpen={isApiSettingsOpen}
-        onClose={() => setIsApiSettingsOpen(false)}
-      />
-      <LoginModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} />
+      {/* Pestañas inferiores (móvil) */}
+      <nav
+        aria-label="Principal"
+        className="no-print fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-surface lg:hidden"
+      >
+        {NAV.map(({ id, short, Icon }) => {
+          const active = activeTab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              aria-current={active ? 'page' : undefined}
+              className={cx(
+                'flex flex-col items-center gap-1 py-2.5 text-xs font-semibold',
+                active ? 'text-accent' : 'text-ink-soft',
+              )}
+            >
+              <Icon className="h-6 w-6" aria-hidden />
+              {short}
+            </button>
+          );
+        })}
+      </nav>
+
+      <ApiSettingsModal isOpen={apiOpen} onClose={() => setApiOpen(false)} />
     </div>
   );
 };

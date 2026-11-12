@@ -1,78 +1,229 @@
-@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Lexend:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @font-face {
   font-family: 'OpenDyslexic';
-  src: url('https://cdn.jsdelivr.net/npm/opendyslexic@1.0.3/dist/opendyslexic/opendyslexic-regular.woff2') format('woff2');
-  font-weight: normal;
+  src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/woff/OpenDyslexic-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'OpenDyslexic';
+  src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/woff/OpenDyslexic-Bold.woff') format('woff');
+  font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 
-@font-face {
-  font-family: 'OpenDyslexic';
-  src: url('https://cdn.jsdelivr.net/npm/opendyslexic@1.0.3/dist/opendyslexic/opendyslexic-bold.woff2') format('woff2');
-  font-weight: bold;
-  font-style: normal;
-  font-display: swap;
+/*
+ * Sala de lectura tranquila.
+ * Cuatro modos que corresponden 1:1 con ContrastMode de la API.
+ * Toda la interfaz usa estos tokens; nada lleva colores fijos.
+ */
+:root,
+:root[data-contrast='light'] {
+  --bg: #eef3f1;
+  --surface: #fbfdfc;
+  --surface-2: #e3ebe8;
+  --ink: #1f2d3a;
+  --ink-soft: #52626f;
+  --line: #cfdad6;
+  --accent: #2f6f8f;
+  --accent-ink: #ffffff;
+  --accent-soft: #dcebf2;
+  --moss: #4f7f4b;
+  --moss-soft: #e1eedc;
+  --ruler: #f6e7a8;
+  --danger: #a3423a;
+  --danger-soft: #f6e1de;
+  color-scheme: light;
+}
+
+:root[data-contrast='dark'] {
+  --bg: #141c24;
+  --surface: #1b2530;
+  --surface-2: #243140;
+  --ink: #e4ebf0;
+  --ink-soft: #a5b4c0;
+  --line: #31404f;
+  --accent: #7db8d4;
+  --accent-ink: #0f1a22;
+  --accent-soft: #1f3a4a;
+  --moss: #93c48c;
+  --moss-soft: #22362a;
+  --ruler: #4a4524;
+  --danger: #f0a39a;
+  --danger-soft: #3d2522;
+  color-scheme: dark;
+}
+
+:root[data-contrast='pastel'] {
+  --bg: #f6f0e1;
+  --surface: #fcf8ee;
+  --surface-2: #efe6d2;
+  --ink: #3a3326;
+  --ink-soft: #6b604d;
+  --line: #e0d4bb;
+  --accent: #3f6e80;
+  --accent-ink: #ffffff;
+  --accent-soft: #e1eceb;
+  --moss: #5f7f45;
+  --moss-soft: #e6edd6;
+  --ruler: #f3dfa0;
+  --danger: #9a4334;
+  --danger-soft: #f5ded6;
+  color-scheme: light;
+}
+
+:root[data-contrast='high-contrast'] {
+  --bg: #000000;
+  --surface: #000000;
+  --surface-2: #1a1a1a;
+  --ink: #ffffff;
+  --ink-soft: #ffffff;
+  --line: #ffffff;
+  --accent: #ffe600;
+  --accent-ink: #000000;
+  --accent-soft: #333000;
+  --moss: #5dff9e;
+  --moss-soft: #00331a;
+  --ruler: #3d3a00;
+  --danger: #ff9b9b;
+  --danger-soft: #3a0000;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-moss: var(--moss);
+  --color-moss-soft: var(--moss-soft);
+  --color-ruler: var(--ruler);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --font-ui: 'Atkinson Hyperlegible', system-ui, sans-serif;
+  --font-display: 'Lexend', 'Atkinson Hyperlegible', sans-serif;
+  --font-reader: var(--reader-font);
 }
 
 :root {
-  --font-family-open-dyslexic: 'OpenDyslexic', sans-serif;
-  --font-family-atkinson: 'Atkinson Hyperlegible', sans-serif;
+  --reader-font: 'OpenDyslexic', 'Atkinson Hyperlegible', sans-serif;
+  --reader-tracking: 0.05em;
+  --reader-leading: 1.6;
 }
 
-/* Accessible utility font classes */
-.font-opendyslexic {
-  font-family: 'OpenDyslexic', sans-serif;
-}
-.font-atkinson {
-  font-family: 'Atkinson Hyperlegible', sans-serif;
-}
-.font-verdana {
-  font-family: Verdana, Geneva, Tahoma, sans-serif;
-}
-.font-arial {
-  font-family: Arial, Helvetica, sans-serif;
-}
-.font-comic {
-  font-family: 'Comic Sans MS', 'Comic Neue', cursive, sans-serif;
+html {
+  background: var(--bg);
 }
 
-/* Contrast Modes */
-body.contrast-light {
-  background-color: #f8fafc;
-  color: #0f172a;
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
 
-body.contrast-dark {
-  background-color: #0f172a;
-  color: #f1f5f9;
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 
-body.contrast-pastel {
-  background-color: #fdfbf7;
-  color: #27272a;
+p {
+  text-wrap: pretty;
 }
 
-body.contrast-high {
-  background-color: #000000;
-  color: #ffff00;
+/* Foco visible y generoso para navegación con teclado. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
 }
 
-/* Soft glow animation for calm celebration */
+/* Texto de lectura: lo controlan las preferencias del estudiante. */
+.reader-text {
+  font-family: var(--reader-font);
+  letter-spacing: var(--reader-tracking);
+  line-height: var(--reader-leading);
+  word-spacing: 0.12em;
+}
+
+/* Deslizadores con el color del tema. */
+input[type='range'] {
+  accent-color: var(--accent);
+  height: 2rem;
+}
+
+/* Brillo suave: única celebración, igual que `animation: soft-glow` de la API. */
 @keyframes soft-glow {
-  0% {
-    box-shadow: 0 0 5px rgba(99, 102, 241, 0.2);
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--moss) 0%, transparent);
   }
   50% {
-    box-shadow: 0 0 25px rgba(99, 102, 241, 0.6);
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--moss) 22%, transparent);
   }
-  100% {
-    box-shadow: 0 0 5px rgba(99, 102, 241, 0.2);
+}
+.animate-soft-glow {
+  animation: soft-glow 2.4s ease-in-out 2;
+}
+
+/* Regla de lectura: desplazamiento suave salvo con movimiento reducido. */
+.ruler-band {
+  transition:
+    top 180ms ease,
+    height 180ms ease;
+}
+
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }
 
-.animate-soft-glow {
-  animation: soft-glow 2.5s ease-in-out infinite;
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+  .no-print {
+    display: none !important;
+  }
+  /* Al imprimir con una tarjeta en pantalla, solo sale la tarjeta. */
+  body:has(#printable-card) * {
+    visibility: hidden;
+  }
+  body:has(#printable-card) #printable-card,
+  body:has(#printable-card) #printable-card * {
+    visibility: visible;
+  }
+  #printable-card {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
 }

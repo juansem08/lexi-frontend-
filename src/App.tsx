@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { AccessibilityProvider } from './context/AccessibilityContext';
 import { Layout, type ActiveTab } from './components/Layout';
-import { ReaderView } from './components/ReaderView';
+import { ReaderView, type ReaderSource } from './components/ReaderView';
 import { OcrUploader } from './components/OcrUploader';
 import { GamificationBoard } from './components/GamificationBoard';
 import { PreferencesPanel } from './components/PreferencesPanel';
@@ -11,53 +11,46 @@ import { LoginModal } from './components/LoginModal';
 
 export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('reader');
-  const [readerInitialText, setReaderInitialText] = useState<string | undefined>();
-  const [readerDocumentId, setReaderDocumentId] = useState<string | undefined>();
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [readerSource, setReaderSource] = useState<ReaderSource | undefined>();
+  const [loginOpen, setLoginOpen] = useState(false);
 
-  const handleTextExtracted = (text: string, documentId: string) => {
-    setReaderInitialText(text);
-    setReaderDocumentId(documentId);
-    setActiveTab('reader');
+  const openLogin = useCallback(() => setLoginOpen(true), []);
+
+  const goTo = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    window.scrollTo({ top: 0 });
   };
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
-      {activeTab === 'reader' && (
-        <ReaderView
-          initialText={readerInitialText}
-          documentId={readerDocumentId}
+    <Layout activeTab={activeTab} setActiveTab={goTo} onOpenLogin={openLogin}>
+      {/* El lector se mantiene montado para no perder la lectura al cambiar de pestaña. */}
+      <div hidden={activeTab !== 'reader'}>
+        <ReaderView source={readerSource} onOpenLogin={openLogin} isActive={activeTab === 'reader'} />
+      </div>
+      {activeTab === 'ocr' && (
+        <OcrUploader
+          onOpenLogin={openLogin}
+          onTextExtracted={(src) => {
+            setReaderSource(src);
+            goTo('reader');
+          }}
         />
       )}
-
-      {activeTab === 'ocr' && (
-        <OcrUploader onTextExtracted={handleTextExtracted} />
-      )}
-
-      {activeTab === 'gamification' && (
-        <GamificationBoard onOpenLogin={() => setIsLoginModalOpen(true)} />
-      )}
-
+      {activeTab === 'gamification' && <GamificationBoard onOpenLogin={openLogin} />}
       {activeTab === 'preferences' && <PreferencesPanel />}
-
       {activeTab === 'educator' && <EducatorPortal />}
 
-      <LoginModal
-        isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
-      />
+      <LoginModal isOpen={loginOpen} onClose={() => setLoginOpen(false)} />
     </Layout>
   );
 };
 
-export const App: React.FC = () => {
-  return (
-    <AuthProvider>
-      <AccessibilityProvider>
-        <AppContent />
-      </AccessibilityProvider>
-    </AuthProvider>
-  );
-};
+export const App: React.FC = () => (
+  <AuthProvider>
+    <AccessibilityProvider>
+      <AppContent />
+    </AccessibilityProvider>
+  </AuthProvider>
+);
 
 export default App;
