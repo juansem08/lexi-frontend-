@@ -1,523 +1,543 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Volume2,
-  Sparkles,
   AlignLeft,
-  Divide,
-  Eye,
-  CheckCircle,
+  Check,
   Pause,
-  RotateCcw,
-  BookOpen,
-  Gauge,
-  Clock,
-  Sliders,
+  PencilLine,
+  Play,
+  Rows3,
+  ScanLine,
+  SpellCheck2,
+  Volume2,
 } from 'lucide-react';
 import { processText } from '../api/readingAssistant';
-import { synthesizeSpeech } from '../api/tts';
-import {
-  startReadingSession,
-  sendHeartbeat,
-  claimReward,
-} from '../api/gamification';
+import { claimReward } from '../api/gamification';
+import { errorMessage } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useAccessibility } from '../context/AccessibilityContext';
-import type { ProcessTextResponse, SentenceAnalysis } from '../types/api';
-import confetti from 'canvas-confetti';
+import { useReadingSession } from '../hooks/useReadingSession';
+import { useSpeech } from '../hooks/useSpeech';
+import {
+  DIFFICULTY_LABEL,
+  PACING,
+  buildSentenceViews,
+  formatMinutes,
+  normalizeKey,
+  shortHash,
+  type SentenceView,
+} from '../lib/reading';
+import { badgeName } from '../lib/badges';
+import type { ClaimRewardResponse, ProcessTextResponse } from '../types/api';
+import { Button, Notice, Segmented, cx } from './ui';
+import { CalmToast } from './CalmToast';
 
-interface Props {
-  initialText?: string;
+export interface ReaderSource {
+  text: string;
   documentId?: string;
+  /** Oración normalizada → chunkId del OCR, para pedir el audio por textChunkId. */
+  chunkIds?: Map<string, string>;
+  title?: string;
 }
 
-const DEFAULT_SAMPLE_TEXT = `Cuando la lectura se siente grande o difícil, podemos dividirla en partes pequeñas y amigables.
+interface Props {
+  source?: ReaderSource;
+  onOpenLogin: () => void;
+  /** false cuando otra pestaña de la app tapa el lector. */
+  isActive?: boolean;
+}
 
-Las palabras tienen ritmos y sílabas que podemos descubrir poco a poco. Si respiramos con calma y enfocamos nuestra atención en una línea a la vez, cada historia se vuelve una aventura hermosa y llena de descubrimientos.`;
+type ViewMode = 'text' | 'syllables' | 'chunks';
 
-export const ReaderView: React.FC<Props> = ({ initialText, documentId }) => {
-  const { isAuthenticated, refreshProfile } = useAuth();
-  const { preferences, fontClass } = useAccessibility();
+const SAMPLE_TEXT = `Cuando la lectura se siente grande, podemos dividirla en partes pequeñas.
 
-  const [rawText, setRawText] = useState(initialText || DEFAULT_SAMPLE_TEXT);
-  const [processed, setProcessed] = useState<ProcessTextResponse | null>(null);
+Las palabras tienen ritmo y sílabas que se descubren poco a poco. Si respiramos con calma y miramos una línea a la vez, cada historia se vuelve más fácil de seguir.`;
+
+function rewardMessage(reward: ClaimRewardResponse, base: string): string | null {
+  if (reward.alreadyClaimed) return null;
+  const parts = [`${base} +${reward.xpAwarded} XP`];
+  if (reward.leveledUp) parts.push(`Ahora estás en el nivel ${reward.progress.level}.`);
+  reward.badges.forEach((b) => parts.push(`Nueva insignia: ${badgeName(b.code, b.name)} ${b.icon}`));
+  return parts.join(' ');
+}
+
+export const ReaderView: React.FC<Props> = ({ source, onOpenLogin, isActive = true }) => {
+  const { isAuthenticated, refreshStats } = useAuth();
+  const { preferences } = useAccessibility();
+
+  const [rawText, setRawText] = useState(source?.text ?? '');
+  const [data, setData] = useState<ProcessTextResponse | null>(null);
+  const [active, setActive] = useState<ReaderSource | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ViewMode>('text');
+  const [rulerOn, setRulerOn] = useState(true);
+  const [focusIdx, setFocusIdx] = useState(0);
+  const [done, setDone] = useState<Set<number>>(new Set());
+  const [toast, setToast] = useState<string | null>(null);
+  const [finished, setFinished] = useState<ClaimRewardResponse | null>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
 
-  // View modes
-  const [viewMode, setViewMode] = useState<'normal' | 'syllables' | 'chunks'>('normal');
-  const [lineFocusActive, setLineFocusActive] = useState(false);
-  const [focusedLineIndex, setFocusedLineIndex] = useState(0);
+  const textKey = data ? shortHash(data.text) : null;
 
-  // TTS playback
-  const [activeSentenceIndex, setActiveSentenceIndex] = useState<number | null>(null);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [synthesizing, setSynthesizing] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const onReward = useCallback(
+    (r: ClaimRewardResponse) => {
+      const msg = rewardMessage(r, 'Un momento de enfoque.');
+      if (msg) setToast(msg);
+      void refreshStats();
+    },
+    [refreshStats],
+  );
 
-  // Gamification Session tracking
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [completedSentences, setCompletedSentences] = useState<Set<number>>(new Set());
-  const [celebrationMsg, setCelebrationMsg] = useState<string | null>(null);
+  const session = useReadingSession({
+    enabled: isAuthenticated,
+    textKey,
+    documentId: active?.documentId,
+    paused: !isActive,
+    onReward,
+  });
+  const { speech, play, stop, togglePause, retryApi } = useSpeech(preferences);
 
-  // Process text on initial load or change of initialText
-  useEffect(() => {
-    if (initialText) {
-      setRawText(initialText);
-      handleProcess(initialText);
-    }
-  }, [initialText]);
+  const views = useMemo(() => (data ? buildSentenceViews(data) : []), [data]);
+  const windowSize = preferences.lineFocusWindowSize;
 
-  // Start or resume session when student is authenticated
-  useEffect(() => {
-    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    let elapsedSeconds = 0;
-
-    async function initSession() {
-      if (isAuthenticated) {
-        try {
-          const session = await startReadingSession(documentId);
-          setSessionId(session.sessionId);
-
-          // Heartbeat every 30 seconds
-          heartbeatTimer = setInterval(async () => {
-            elapsedSeconds += 30;
-            try {
-              await sendHeartbeat(session.sessionId, 30, 1, 1);
-            } catch (err) {
-              console.error('Heartbeat error', err);
-            }
-          }, 30000);
-        } catch (err) {
-          console.error('Could not start reading session', err);
-        }
+  const prepare = useCallback(
+    async (src: ReaderSource) => {
+      if (!isAuthenticated) {
+        onOpenLogin();
+        return;
       }
+      setLoading(true);
+      setError(null);
+      try {
+        const pacing = PACING[preferences.highlightPacing];
+        const res = await processText({
+          text: src.text,
+          language: 'es',
+          options: { maxWordsPerChunk: pacing.maxWords, wordsPerMinute: pacing.wpm },
+        });
+        stop();
+        setData(res);
+        setActive(src);
+        setDone(new Set());
+        setFocusIdx(0);
+        setFinished(null);
+      } catch (err) {
+        setError(errorMessage(err, 'No se pudo preparar el texto.'));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [isAuthenticated, onOpenLogin, preferences.highlightPacing, stop],
+  );
+
+  // Texto que llega desde el escáner.
+  useEffect(() => {
+    if (source) {
+      setRawText(source.text);
+      if (isAuthenticated) void prepare(source);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
 
-    initSession();
-
-    return () => {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
+  // Teclado: flechas o J/K mueven la regla de lectura.
+  useEffect(() => {
+    if (!data || !rulerOn) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // El lector sigue montado en otras pestañas: solo actúa si está visible.
+      if (!pageRef.current?.offsetParent) return;
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        setFocusIdx((i) => Math.min(views.length - 1, i + 1));
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        setFocusIdx((i) => Math.max(0, i - 1));
+      }
     };
-  }, [isAuthenticated, documentId]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [data, rulerOn, views.length]);
 
-  const handleProcess = async (textToProcess?: string) => {
-    const text = textToProcess || rawText;
-    if (!text.trim()) return;
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (!rulerOn) return;
+    pageRef.current
+      ?.querySelector(`[data-sentence="${focusIdx}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: preferences.reduceMotion ? 'auto' : 'smooth' });
+  }, [focusIdx, rulerOn, preferences.reduceMotion]);
+
+  const listen = (v: SentenceView) => {
+    session.recordInteraction();
+    if (speech.index === v.sentence.index && (speech.playing || speech.loading)) {
+      togglePause();
+      return;
+    }
+    const chunkId = active?.chunkIds?.get(normalizeKey(v.sentence.text));
+    void play(v.sentence.index, v.sentence.text, chunkId ? { textChunkId: chunkId } : { text: v.sentence.text });
+    setFocusIdx(v.sentence.index);
+  };
+
+  const markRead = async (v: SentenceView) => {
+    if (done.has(v.sentence.index) || !data) return;
+    setDone((prev) => new Set(prev).add(v.sentence.index));
+    session.recordChunk();
+    if (rulerOn) setFocusIdx(Math.min(views.length - 1, v.sentence.index + 1));
     try {
-      const data = await processText({
-        text,
-        language: 'es',
-        options: {
-          maxWordsPerChunk: 10,
-          wordsPerMinute: Math.round(140 * preferences.speechRate),
-        },
-      });
-      setProcessed(data);
-      setCompletedSentences(new Set());
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error al procesar el texto');
-    } finally {
-      setLoading(false);
+      const reward = await claimReward(
+        'SENTENCE_COMPLETED',
+        `sentence:${shortHash(data.text)}:${v.sentence.index}`,
+        session.sessionId ?? undefined,
+      );
+      const msg = rewardMessage(reward, 'Oración leída.');
+      if (msg) setToast(msg);
+      void refreshStats();
+    } catch (err) {
+      console.error('No se pudo registrar la oración', err);
     }
   };
 
-  // TTS audio synthesize and play
-  const handlePlaySentence = async (sentence: SentenceAnalysis, index: number) => {
+  const finish = async () => {
+    if (!data) return;
+    stop();
     try {
-      setSynthesizing(true);
-      setActiveSentenceIndex(index);
-
-      const res = await synthesizeSpeech({
-        text: sentence.text,
-        voice: {
-          speed: preferences.speechRate,
-          pitch: preferences.speechPitch,
-        },
-      });
-
-      if (audioRef.current) {
-        audioRef.current.src = res.signedUrl;
-        audioRef.current.play();
-        setIsPlayingAudio(true);
-      }
-    } catch (err: unknown) {
-      console.error('TTS error', err);
-      setError('No se pudo reproducir el audio. Verifica el servicio de TTS del backend.');
-    } finally {
-      setSynthesizing(false);
+      const page = await claimReward(
+        'PAGE_COMPLETED',
+        `page:${active?.documentId ?? shortHash(data.text)}`,
+        session.sessionId ?? undefined,
+      );
+      const sessionReward = await session.complete();
+      setFinished(sessionReward ?? page);
+      void refreshStats();
+    } catch (err) {
+      setError(errorMessage(err, 'No se pudo registrar la lectura.'));
     }
   };
 
-  const toggleAudio = () => {
-    if (!audioRef.current) return;
-    if (isPlayingAudio) {
-      audioRef.current.pause();
-      setIsPlayingAudio(false);
-    } else {
-      audioRef.current.play();
-      setIsPlayingAudio(true);
-    }
-  };
+  // ─── Antes de preparar el texto ───────────────────────────────
+  if (!data) {
+    return (
+      <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_16rem]">
+        <div>
+          <h1 className="text-3xl font-semibold sm:text-4xl">¿Qué vas a leer hoy?</h1>
+          <p className="mt-2 max-w-xl text-lg text-ink-soft">
+            Pega un cuento, una tarea o una página. LexiLearn la separa en oraciones, sílabas y partes
+            cortas para que la leas a tu ritmo.
+          </p>
 
-  // Gentle celebration
-  const triggerCelebration = (msg: string) => {
-    setCelebrationMsg(msg);
-    if (!preferences.reduceMotion) {
-      confetti({
-        particleCount: 25,
-        spread: 60,
-        origin: { y: 0.8 },
-        colors: ['#818cf8', '#34d399', '#f472b6', '#fbbf24'],
-        disableForReducedMotion: true,
-      });
-    }
-    setTimeout(() => {
-      setCelebrationMsg(null);
-    }, 4000);
-  };
-
-  // Mark sentence completed
-  const handleCompleteSentence = async (index: number) => {
-    const newSet = new Set(completedSentences);
-    newSet.add(index);
-    setCompletedSentences(newSet);
-
-    if (isAuthenticated) {
-      try {
-        const taskId = `sentence-${sessionId || 'local'}-${index}`;
-        const reward = await claimReward(taskId, 'SENTENCE_COMPLETED', sessionId || undefined);
-        if (reward.claimed && !reward.alreadyClaimed) {
-          triggerCelebration(`¡Buen trabajo! +${reward.xpAwarded} XP ganados`);
-          refreshProfile();
-        }
-      } catch (err) {
-        console.error('Reward error', err);
-      }
-    } else {
-      triggerCelebration('¡Oración completada con éxito!');
-    }
-  };
-
-  // Mark full text completed
-  const handleCompleteText = async () => {
-    if (isAuthenticated) {
-      try {
-        const taskId = `page-${sessionId || 'local'}-${Date.now()}`;
-        const reward = await claimReward(taskId, 'PAGE_COMPLETED', sessionId || undefined);
-        if (reward.claimed) {
-          triggerCelebration(`¡Excelente lectura! +${reward.xpAwarded} XP`);
-          refreshProfile();
-        }
-      } catch (err) {
-        console.error('Reward error', err);
-      }
-    } else {
-      triggerCelebration('¡Lectura completa finalizada!');
-    }
-  };
-
-  return (
-    <div className={`space-y-6 ${fontClass}`}>
-      {/* Hidden audio element */}
-      <audio
-        ref={audioRef}
-        onEnded={() => {
-          setIsPlayingAudio(false);
-          setActiveSentenceIndex(null);
-        }}
-      />
-
-      {/* Celebration Banner */}
-      {celebrationMsg && (
-        <div className="animate-soft-glow fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl bg-indigo-600 px-5 py-3 text-white shadow-xl">
-          <Sparkles className="h-6 w-6 text-amber-300" />
-          <span className="font-bold text-sm md:text-base">{celebrationMsg}</span>
-        </div>
-      )}
-
-      {/* Header controls & Input section if not processed */}
-      {!processed ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="mb-4 flex items-center gap-3">
-            <BookOpen className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
-            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">
-              Ingresa o Pega el Texto a Leer
-            </h2>
-          </div>
-
+          <label htmlFor="reader-input" className="sr-only">
+            Texto para leer
+          </label>
           <textarea
-            rows={6}
+            id="reader-input"
+            rows={9}
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
-            placeholder="Escribe o pega aquí el texto de tu cuento, tarea o libro..."
-            className="w-full rounded-2xl border-2 border-slate-200 bg-slate-50 p-4 text-base focus:border-indigo-500 focus:outline-hidden dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-            style={{
-              letterSpacing: `${preferences.letterSpacing}em`,
-              lineHeight: preferences.lineHeight,
-            }}
+            maxLength={20000}
+            placeholder="Escribe o pega aquí tu texto…"
+            className="reader-text mt-6 w-full rounded-[20px] border-2 border-line bg-surface p-5 text-xl text-ink placeholder:text-ink-soft/70 focus:border-accent focus:outline-none"
           />
 
           {error && (
-            <div className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-950/50 dark:text-rose-300">
+            <Notice tone="error" className="mt-4">
               {error}
-            </div>
+            </Notice>
           )}
 
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => handleProcess()}
-              disabled={loading || !rawText.trim()}
-              className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 font-bold text-white shadow-md hover:bg-indigo-700 disabled:opacity-50"
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <Button
+              size="lg"
+              loading={loading}
+              disabled={!rawText.trim()}
+              onClick={() => void prepare({ text: rawText })}
             >
-              <Sparkles className="h-5 w-5" />
-              <span>{loading ? 'Analizando fonología...' : 'Comenzar Asistente de Lectura'}</span>
-            </button>
-            <button
-              type="button"
+              {isAuthenticated ? 'Preparar la lectura' : 'Entrar y preparar la lectura'}
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => {
-                setRawText(DEFAULT_SAMPLE_TEXT);
-                handleProcess(DEFAULT_SAMPLE_TEXT);
+                setRawText(SAMPLE_TEXT);
+                if (isAuthenticated) void prepare({ text: SAMPLE_TEXT });
               }}
-              className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
             >
-              Cargar texto de ejemplo
-            </button>
+              Probar con un texto de ejemplo
+            </Button>
           </div>
+          <p className="mt-3 text-sm text-ink-soft">{rawText.length.toLocaleString('es')} de 20.000 caracteres</p>
         </div>
-      ) : (
-        /* Reading Experience Mode */
-        <div className="space-y-6">
-          {/* Top Control Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {/* View Mode Selectors */}
-            <div className="flex items-center gap-2 rounded-2xl bg-slate-100 p-1.5 dark:bg-slate-800">
-              <button
-                type="button"
-                onClick={() => setViewMode('normal')}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${
-                  viewMode === 'normal'
-                    ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                <AlignLeft className="h-4 w-4" />
-                <span>Normal</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('syllables')}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${
-                  viewMode === 'syllables'
-                    ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                <Divide className="h-4 w-4" />
-                <span>Sílabas</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('chunks')}
-                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${
-                  viewMode === 'chunks'
-                    ? 'bg-white text-indigo-600 shadow-sm dark:bg-slate-700 dark:text-indigo-300'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                <Sliders className="h-4 w-4" />
-                <span>Micro-cláusulas</span>
-              </button>
-            </div>
 
-            {/* Line Focus Toggle */}
-            <button
-              type="button"
-              onClick={() => setLineFocusActive(!lineFocusActive)}
-              className={`flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition-all ${
-                lineFocusActive
-                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
-              }`}
-            >
-              <Eye className="h-4 w-4" />
-              <span>Regla de Enfoque: {lineFocusActive ? 'Activada' : 'Desactivada'}</span>
-            </button>
+        <aside className="space-y-5 text-ink-soft lg:pt-16">
+          <p>
+            <strong className="text-ink">Sílabas.</strong> Cada palabra se separa respetando diptongos
+            e hiatos del español.
+          </p>
+          <p>
+            <strong className="text-ink">Partes cortas.</strong> Las oraciones largas se dividen en
+            bloques de {PACING[preferences.highlightPacing].maxWords} palabras como máximo.
+          </p>
+          <p>
+            <strong className="text-ink">Regla de lectura.</strong> Ilumina {windowSize}{' '}
+            {windowSize === 1 ? 'oración' : 'oraciones'} y atenúa el resto.
+          </p>
+        </aside>
+      </div>
+    );
+  }
 
-            {/* Readability Metrics pill */}
-            <div className="flex items-center gap-4 text-xs font-semibold text-slate-500 dark:text-slate-400">
-              <span className="flex items-center gap-1">
-                <Gauge className="h-4 w-4 text-emerald-500" />
-                Dificultad: {processed.difficulty.score}/100 ({processed.difficulty.level})
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-4 w-4 text-sky-500" />
-                ~{processed.readingTime.estimatedMinutes} min ({processed.statistics.words} palabras)
-              </span>
-            </div>
+  // ─── Lectura ───────────────────────────────────────────────────
+  const total = views.length;
+  const readCount = done.size;
+  const half = Math.floor((windowSize - 1) / 2);
+  const winStart = Math.max(0, Math.min(focusIdx - half, total - windowSize));
+  const inWindow = (i: number) => i >= winStart && i < winStart + windowSize;
 
-            {/* Reset / Edit button */}
-            <button
-              type="button"
-              onClick={() => setProcessed(null)}
-              className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400"
-            >
-              <RotateCcw className="h-4 w-4" />
-              <span>Cambiar texto</span>
-            </button>
-          </div>
+  return (
+    <div>
+      <CalmToast message={toast} onDone={() => setToast(null)} />
 
-          {/* Reading Display Area */}
-          <div
-            className="relative rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-10 dark:border-slate-800 dark:bg-slate-900"
-            style={{
-              letterSpacing: `${preferences.letterSpacing}em`,
-              lineHeight: preferences.lineHeight,
-            }}
-          >
-            <div className="space-y-6">
-              {processed.sentences.map((sentence, sIdx) => {
-                const isCurrentActive = activeSentenceIndex === sIdx;
-                const isCompleted = completedSentences.has(sIdx);
-                const isFocusedLine = !lineFocusActive || Math.abs(focusedLineIndex - sIdx) <= 1;
+      {/* Herramientas */}
+      <div className="no-print sticky top-[4.25rem] z-20 -mx-4 mb-6 flex flex-wrap items-center gap-3 border-b border-line bg-bg/95 px-4 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:top-0 lg:-mx-12 lg:px-12">
+        <Segmented<ViewMode>
+          label="Forma de mostrar el texto"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { id: 'text', label: 'Texto', icon: <AlignLeft className="h-4 w-4" /> },
+            { id: 'syllables', label: 'Sílabas', icon: <SpellCheck2 className="h-4 w-4" /> },
+            { id: 'chunks', label: 'Partes cortas', icon: <Rows3 className="h-4 w-4" /> },
+          ]}
+        />
+        <button
+          type="button"
+          aria-pressed={rulerOn}
+          onClick={() => setRulerOn((v) => !v)}
+          className={cx(
+            'inline-flex min-h-12 items-center gap-2 rounded-xl px-4 text-sm font-semibold',
+            rulerOn ? 'bg-ruler text-ink' : 'bg-surface-2 text-ink-soft hover:text-ink',
+          )}
+        >
+          <ScanLine className="h-4 w-4" aria-hidden />
+          Regla de lectura
+        </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
+          icon={<PencilLine className="h-4 w-4" />}
+          onClick={() => {
+            stop();
+            setData(null);
+          }}
+        >
+          Cambiar texto
+        </Button>
+      </div>
 
-                return (
-                  <div
-                    key={sentence.index}
-                    onMouseEnter={() => setFocusedLineIndex(sIdx)}
-                    className={`group relative rounded-2xl p-4 transition-all duration-200 ${
-                      isCurrentActive
-                        ? 'bg-indigo-50 ring-2 ring-indigo-400 dark:bg-indigo-950/60'
-                        : isCompleted
-                        ? 'bg-emerald-50/60 dark:bg-emerald-950/30'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                    } ${
-                      lineFocusActive && !isFocusedLine
-                        ? 'opacity-25 blur-2xs'
-                        : 'opacity-100'
-                    }`}
-                  >
-                    {/* Sentence Action floating toolbar */}
-                    <div className="mb-2 flex items-center justify-between opacity-80 transition-opacity group-hover:opacity-100">
-                      <span className="text-xs font-bold text-slate-400">
-                        Oración #{sIdx + 1} ({sentence.wordCount} palabras)
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {/* Audio Button */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (isCurrentActive && isPlayingAudio) {
-                              toggleAudio();
-                            } else {
-                              handlePlaySentence(sentence, sIdx);
-                            }
-                          }}
-                          disabled={synthesizing && isCurrentActive}
-                          className="flex items-center gap-1 rounded-xl bg-indigo-100 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/60 dark:text-indigo-300"
-                        >
-                          {isCurrentActive && isPlayingAudio ? (
-                            <>
-                              <Pause className="h-3.5 w-3.5" />
-                              <span>Pausar</span>
-                            </>
-                          ) : (
-                            <>
-                              <Volume2 className="h-3.5 w-3.5" />
-                              <span>{synthesizing && isCurrentActive ? 'Generando...' : 'Escuchar'}</span>
-                            </>
-                          )}
-                        </button>
-
-                        {/* Complete Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleCompleteSentence(sIdx)}
-                          className={`flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
-                            isCompleted
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 dark:bg-slate-800 dark:text-slate-300'
-                          }`}
-                        >
-                          <CheckCircle className="h-3.5 w-3.5" />
-                          <span>{isCompleted ? 'Leída ✓' : 'Marcar Leída'}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Content Rendering by View Mode */}
-                    {viewMode === 'normal' && (
-                      <p className="text-xl leading-relaxed text-slate-800 dark:text-slate-100">
-                        {sentence.text}
-                      </p>
-                    )}
-
-                    {viewMode === 'syllables' && (
-                      <p className="flex flex-wrap gap-x-2 gap-y-1 text-xl leading-relaxed text-slate-800 dark:text-slate-100">
-                        {processed.words
-                          .filter(
-                            (w) =>
-                              w.startOffset >= sentence.startOffset &&
-                              w.endOffset <= sentence.endOffset
-                          )
-                          .map((word) => (
-                            <span
-                              key={word.index}
-                              className="inline-flex rounded-md bg-slate-100/70 px-1 dark:bg-slate-800/80"
-                            >
-                              {word.syllables.map((syl, i) => (
-                                <span
-                                  key={i}
-                                  className={`${
-                                    i % 2 === 0
-                                      ? 'text-indigo-600 font-bold dark:text-indigo-400'
-                                      : 'text-slate-700 dark:text-slate-200'
-                                  }`}
-                                >
-                                  {syl.text}
-                                  {i < word.syllables.length - 1 && (
-                                    <span className="text-slate-300 dark:text-slate-600">·</span>
-                                  )}
-                                </span>
-                              ))}
-                            </span>
-                          ))}
-                      </p>
-                    )}
-
-                    {viewMode === 'chunks' && (
-                      <div className="flex flex-wrap gap-2">
-                        {sentence.microChunks.map((chunk, cIdx) => (
-                          <span
-                            key={cIdx}
-                            className="inline-flex items-center rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-1.5 text-lg font-medium text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200"
-                          >
-                            {chunk.text}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Bottom Finalize Button */}
-            <div className="mt-10 flex justify-center border-t border-slate-100 pt-6 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={handleCompleteText}
-                className="flex items-center gap-3 rounded-2xl bg-emerald-600 px-8 py-4 text-base font-bold text-white shadow-lg transition-transform hover:bg-emerald-700 active:scale-98"
-              >
-                <CheckCircle className="h-6 w-6" />
-                <span>¡He terminado esta lectura! (Ganar XP)</span>
-              </button>
-            </div>
-          </div>
-        </div>
+      {speech.notice && (
+        <Notice tone="info" className="no-print mb-6">
+          {speech.notice}{' '}
+          <button type="button" onClick={retryApi} className="font-semibold text-accent underline">
+            Probar otra vez la voz de la API
+          </button>
+        </Notice>
       )}
+      {error && (
+        <Notice tone="error" className="mb-6">
+          {error}
+        </Notice>
+      )}
+
+      <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_15rem]">
+        {/* Página */}
+        <article
+          ref={pageRef}
+          aria-label={active?.title ?? 'Texto para leer'}
+          className="reader-text rounded-[20px] border border-line bg-surface py-6 text-[1.4rem] text-ink sm:py-10"
+        >
+          {views.map((v) => {
+            const i = v.sentence.index;
+            const isDone = done.has(i);
+            const speaking = speech.index === i;
+            const dim = rulerOn && !inWindow(i);
+            const lit = rulerOn && inWindow(i);
+            return (
+              <div
+                key={i}
+                data-sentence={i}
+                onPointerEnter={(e) => {
+                  if (rulerOn && e.pointerType === 'mouse') setFocusIdx(i);
+                }}
+                className={cx(
+                  'group ruler-band relative grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-start gap-1 px-2 py-2 sm:grid-cols-[3.25rem_minmax(0,1fr)_3.25rem] sm:px-4',
+                  v.newParagraph && 'mt-6',
+                  lit && 'bg-ruler',
+                  dim && 'opacity-35',
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => listen(v)}
+                  aria-label={
+                    speaking && speech.playing ? `Pausar oración ${i + 1}` : `Escuchar oración ${i + 1}`
+                  }
+                  className={cx(
+                    'mt-0.5 flex h-11 w-11 items-center justify-center rounded-full font-ui',
+                    speaking ? 'bg-accent text-accent-ink' : 'text-ink-soft hover:bg-surface-2 hover:text-accent',
+                  )}
+                >
+                  {speaking && speech.loading ? (
+                    <Volume2 className="h-5 w-5 animate-pulse" />
+                  ) : speaking && speech.playing ? (
+                    <Pause className="h-5 w-5" />
+                  ) : speaking ? (
+                    <Play className="h-5 w-5" />
+                  ) : (
+                    <Volume2 className="h-5 w-5" />
+                  )}
+                </button>
+
+                <div className="max-w-[38em] py-1.5">
+                  <SentenceBody view={v} mode={mode} speakingChar={speaking ? speech.charIndex : -1} />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void markRead(v)}
+                  aria-pressed={isDone}
+                  aria-label={isDone ? `Oración ${i + 1} leída` : `Marcar oración ${i + 1} como leída`}
+                  className={cx(
+                    'mt-0.5 flex h-11 w-11 items-center justify-center rounded-full border-2',
+                    isDone
+                      ? 'border-moss bg-moss text-accent-ink'
+                      : 'border-line text-ink-soft hover:border-moss hover:text-moss',
+                  )}
+                >
+                  <Check className="h-5 w-5" />
+                </button>
+              </div>
+            );
+          })}
+
+          <div className="mx-6 mt-10 border-t border-line pt-8 font-ui sm:mx-10">
+            {finished ? (
+              <div className="animate-soft-glow rounded-2xl bg-moss-soft p-5">
+                <p className="font-[Lexend] text-xl font-semibold">Lectura terminada.</p>
+                <p className="mt-1 text-ink-soft">
+                  Tienes {finished.progress.totalXp} XP y vas en el nivel {finished.progress.level}. Puedes
+                  descansar o empezar otro texto cuando quieras.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-4">
+                <Button variant="moss" size="lg" onClick={() => void finish()}>
+                  Terminé de leer
+                </Button>
+                <span className="text-ink-soft">No hace falta marcar todas las oraciones.</span>
+              </div>
+            )}
+          </div>
+        </article>
+
+        {/* Datos del texto */}
+        <aside className="no-print space-y-6 font-ui xl:sticky xl:top-24 xl:self-start">
+          <div>
+            <p className="text-sm text-ink-soft">Llevas</p>
+            <p className="font-[Lexend] text-2xl font-semibold">
+              {readCount} de {total} oraciones
+            </p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-2">
+              <div className="h-full rounded-full bg-moss" style={{ width: `${total ? (readCount / total) * 100 : 0}%` }} />
+            </div>
+          </div>
+          <dl className="space-y-4">
+            <div>
+              <dt className="text-sm text-ink-soft">Tiempo aproximado</dt>
+              <dd className="text-lg">{formatMinutes(data.readingTime.estimatedSeconds)}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-ink-soft">Palabras</dt>
+              <dd className="text-lg">{data.statistics.words}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-ink-soft">Dificultad</dt>
+              <dd className="text-lg">
+                {DIFFICULTY_LABEL[data.difficulty.level]}{' '}
+                <span className="text-ink-soft">({Math.round(data.difficulty.score)} de 100)</span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-ink-soft">Palabras por oración</dt>
+              <dd className="text-lg">{data.statistics.averageWordsPerSentence.toFixed(1)}</dd>
+            </div>
+          </dl>
+          {rulerOn && (
+            <p className="text-sm text-ink-soft">
+              Mueve la regla con las flechas ↑ ↓ del teclado o pasando el ratón.
+            </p>
+          )}
+        </aside>
+      </div>
     </div>
+  );
+};
+
+const SentenceBody: React.FC<{ view: SentenceView; mode: ViewMode; speakingChar: number }> = ({
+  view,
+  mode,
+  speakingChar,
+}) => {
+  const { sentence, words } = view;
+
+  if (mode === 'chunks') {
+    return (
+      <span className="flex flex-col gap-1.5">
+        {sentence.microChunks.map((c, i) => (
+          <span key={i} className="border-l-4 border-accent/50 pl-3">
+            {c.text}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  if (mode === 'syllables') {
+    return (
+      <span className="flex flex-wrap gap-x-[0.6em] gap-y-1">
+        {words.map((w) => (
+          <span key={w.index} className="whitespace-nowrap">
+            {w.syllables.map((s, i) => (
+              <React.Fragment key={i}>
+                <span className={i % 2 === 0 ? 'text-ink' : 'text-accent'}>{s.text}</span>
+                {i < w.syllables.length - 1 && <span className="text-ink-soft/60">·</span>}
+              </React.Fragment>
+            ))}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  // Texto normal: resalta la palabra que suena mientras se escucha.
+  if (speakingChar < 0) return <span>{sentence.text}</span>;
+  const base = sentence.startOffset;
+  return (
+    <span>
+      {words.map((w, i) => {
+        const start = w.startOffset - base;
+        const end = w.endOffset - base;
+        const next = words[i + 1];
+        const tail = next ? sentence.text.slice(end, next.startOffset - base) : sentence.text.slice(end);
+        const lead = i === 0 ? sentence.text.slice(0, start) : '';
+        const current = speakingChar >= start && (next ? speakingChar < next.startOffset - base : true);
+        return (
+          <React.Fragment key={w.index}>
+            {lead}
+            <span className={current ? 'rounded bg-accent px-0.5 text-accent-ink' : undefined}>
+              {sentence.text.slice(start, end)}
+            </span>
+            {tail}
+          </React.Fragment>
+        );
+      })}
+    </span>
   );
 };

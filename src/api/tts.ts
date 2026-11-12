@@ -1,18 +1,21 @@
 import { request } from './client';
-import type { SynthesizeSpeechResponse } from '../types/api';
+import type { SynthesizeSpeechResponse, TtsVoicePersona } from '../types/api';
 
-export interface SynthesizeSpeechPayload {
-  textChunkId?: string;
-  text?: string;
-  voice?: {
-    speed?: number;
-    pitch?: number;
-  };
+export interface VoiceSettings {
+  persona?: TtsVoicePersona;
+  speed?: number;
+  pitch?: number;
 }
 
-export function synthesizeSpeech(payload: SynthesizeSpeechPayload): Promise<SynthesizeSpeechResponse> {
+/** La API exige exactamente una fuente: texto libre o un chunk de OCR propio. */
+export type SynthesizeSource = { text: string } | { textChunkId: string };
+
+export function synthesizeSpeech(
+  source: SynthesizeSource,
+  voice?: VoiceSettings,
+): Promise<SynthesizeSpeechResponse> {
   return request<SynthesizeSpeechResponse>('/tts/synthesize', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(voice ? { ...source, voice } : source),
   });
 }

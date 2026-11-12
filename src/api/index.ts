@@ -5,3 +5,4 @@ export * from './ocr';
 export * from './readingAssistant';
 export * from './tts';
 export * from './gamification';
+export * from './health';

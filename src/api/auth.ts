@@ -1,64 +1,39 @@
 import { request } from './client';
-import type { AuthResponse } from '../types/api';
+import type {
+  AuthResponse,
+  PinChangedResponse,
+  QrTokenResponse,
+  VisualTokenResponse,
+} from '../types/api';
 
-export interface LoginPinPayload {
-  studentCode: string;
-  pin: string;
+const post = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(body) });
+
+export function loginWithPin(studentCode: string, pin: string): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/login/pin', post({ studentCode, pin }));
 }
 
-export interface LoginQrPayload {
-  qrToken: string;
+export function loginWithQr(qrToken: string): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/login/qr', post({ qrToken }));
 }
 
-export interface LoginVisualPayload {
-  studentCode: string;
-  imageSequence: string[];
+export function loginWithVisual(
+  studentCode: string,
+  imageSequence: string[],
+): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/login/visual', post({ studentCode, imageSequence }));
 }
 
-export interface QrTokenResponse {
-  qrToken: string;
-  studentCode: string;
-  expiresAt: string;
-  expiresIn: number;
+/** rotate=true invalida todas las tarjetas QR impresas anteriormente. */
+export function generateQrToken(rotate = false): Promise<QrTokenResponse> {
+  return request<QrTokenResponse>('/auth/qr-token', post({ rotate }));
 }
 
-export function loginWithPin(data: LoginPinPayload): Promise<AuthResponse> {
-  return request<AuthResponse>('/auth/login/pin', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
+export function setVisualToken(imageSequence: string[]): Promise<VisualTokenResponse> {
+  return request<VisualTokenResponse>('/auth/visual-token', post({ imageSequence }));
 }
 
-export function loginWithQr(data: LoginQrPayload): Promise<AuthResponse> {
-  return request<AuthResponse>('/auth/login/qr', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export function loginWithVisual(data: LoginVisualPayload): Promise<AuthResponse> {
-  return request<AuthResponse>('/auth/login/visual', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
-export function getQrToken(rotate = false): Promise<QrTokenResponse> {
-  return request<QrTokenResponse>('/auth/qr-token', {
-    method: 'POST',
-    body: JSON.stringify({ rotate }),
-  });
-}
-
-export function setVisualToken(imageSequence: string[]): Promise<{ message: string; visualTokenConfigured: boolean }> {
-  return request<{ message: string; visualTokenConfigured: boolean }>('/auth/visual-token', {
-    method: 'POST',
-    body: JSON.stringify({ imageSequence }),
-  });
-}
-
-export function changePin(currentPin: string, newPin: string): Promise<{ message: string }> {
-  return request<{ message: string }>('/auth/pin', {
+export function changePin(currentPin: string, newPin: string): Promise<PinChangedResponse> {
+  return request<PinChangedResponse>('/auth/pin', {
     method: 'PATCH',
     body: JSON.stringify({ currentPin, newPin }),
   });

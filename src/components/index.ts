@@ -6,3 +6,7 @@ export * from './PreferencesPanel';
 export * from './EducatorPortal';
 export * from './LoginModal';
 export * from './ApiSettingsModal';
+export * from './AccountPanel';
+export * from './QrCard';
+export * from './Modal';
+export * from './ui';
